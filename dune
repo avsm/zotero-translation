@@ -1,4 +1,4 @@
 (library
   (name zotero_translation)
-  (package zotero-translation)
+  (public_name zotero-translation)
   (libraries astring cohttp-lwt-unix ezjsonm))
