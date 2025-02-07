@@ -147,14 +147,79 @@ let export {base_uri} format api =
   let headers = Http.Header.init_with "content-type" "application/json" in
   let uri = Uri.with_query' (export_endp base_uri ) ["format", (format_to_string format)] in
   CLU.call ~headers ~body `POST uri >>= fun (resp, body) ->
-    let status = C.Response.status resp in
-    body |> Cohttp_lwt.Body.to_string >>= fun body ->
-      if status = `OK then begin
-          try
-            match format with
-            | Bibtex -> Lwt.return_ok (Astring.String.trim body)
-            | _ -> Lwt.return_ok body
-          with exn -> Lwt.return_error (`Msg (Printexc.to_string exn))
-      end else
-        Lwt.return_error (`Msg (Format.asprintf "Unexpected HTTP status: %a for %s" Http.Status.pp status body))
-    
+  let status = C.Response.status resp in
+  body |> Cohttp_lwt.Body.to_string >>= fun body ->
+  if status = `OK then begin
+    try
+      match format with
+      | Bibtex -> Lwt.return_ok (Astring.String.trim body)
+      | _ -> Lwt.return_ok body
+    with exn -> Lwt.return_error (`Msg (Printexc.to_string exn))
+  end else
+    Lwt.return_error (`Msg (Format.asprintf "Unexpected HTTP status: %a for %s" Http.Status.pp status body))
+
+module SM = B0_std.String.Map
+let unescape_hex s =
+  let buf = Buffer.create (String.length s) in
+  let rec aux i =
+    if i >= String.length s then
+      Buffer.contents buf
+    else
+      if s.[i] = '\\' && i+3 < String.length s && s.[i+1] = 'x' then
+        let hex = String.sub s (i+2) 2 in
+        let char_code = int_of_string ("0x" ^ hex) in
+        Buffer.add_char buf (char_of_int char_code);
+        aux (i+4)
+      else begin
+        Buffer.add_char buf s.[i];
+        aux (i+1)
+      end
+  in aux 0
+
+let unescape_bibtex s =
+  unescape_hex s |>
+  String.split_on_char '{' |> String.concat "" |>
+  String.split_on_char '}' |> String.concat ""
+
+let fields_of_bib bib =
+  match Bibtex.of_string bib with
+  | Error e ->
+      prerr_endline bib;
+      Fmt.epr "%a\n%!" Bibtex.pp_error e;
+      Lwt.fail_with "bib parse err TODO"
+  | Ok [bib] ->
+      let f = Bibtex.fields bib |> SM.bindings |> List.map (fun (k,v) -> k, (unescape_bibtex v)) in
+      let ty = match Bibtex.type' bib with "inbook" -> "book" | x -> x in
+      let v = List.fold_left (fun acc (k,v) -> (k,(`String v))::acc) ["bibtype",`String ty] f in
+      Lwt.return v
+  | Ok _ -> Lwt.fail_with "one bib at a time plz"
+
+let print_json j =
+  prerr_endline (Ezjsonm.to_string j)
+
+let bib_of_doi zt doi =
+  prerr_endline ("Fetching " ^ doi);
+  let v = resolve_doi zt doi >>= function
+  | Ok r ->
+     print_json r;
+     Lwt.return r
+  | Error (`Msg _) ->
+     Printf.eprintf "%s failed on /web, trying to /search\n%!" doi;
+     search_id zt doi >>= function
+     | Error (`Msg e) -> Lwt.fail_with e
+     | Ok r ->
+        print_json r;
+        Lwt.return r
+  in
+  v >>= fun v ->
+  print_json v;
+  export zt Bibtex v >>= function
+  | Error (`Msg e) -> Lwt.fail_with e
+  | Ok r ->
+      print_endline r;
+      Lwt.return r
+
+let json_of_doi zt doi =
+  bib_of_doi zt doi >>= fun x ->
+  fields_of_bib x >>= fun x ->
+  Lwt.return (`O x)
