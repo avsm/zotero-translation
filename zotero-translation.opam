@@ -31,3 +31,6 @@ build: [
   ]
 ]
 dev-repo: "git+https://github.com/avsm/zotero-translation.git"
+pin-depends: [
+ [ "b0.dev" "git+https://erratique.ch/repos/b0.git" ]
+]
