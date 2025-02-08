@@ -15,6 +15,7 @@
  (depends
   (ocaml (>= "5.1.0"))
   uri
+  http
   cohttp-lwt-unix
   ezjsonm
   yaml))
