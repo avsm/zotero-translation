@@ -3,6 +3,7 @@
 module C = Cohttp
 module CL = Cohttp_lwt
 module CLU = Cohttp_lwt_unix.Client
+module J = Ezjsonm
 
 (* From the ZTS source code:  https://github.com/zotero/translation-server/blob/master/src/formats.js
   bibtex: "9cb70025-a888-4a29-a210-93ec52da40d4",
@@ -120,7 +121,7 @@ let resolve_doi { base_uri } doi =
   body |> Cohttp_lwt.Body.to_string >>= fun body ->
   if status = `OK then begin
     try
-      let doi_json = Ezjsonm.from_string body in
+      let doi_json = J.from_string body in
       Lwt.return_ok doi_json
     with exn -> Lwt.return_error (`Msg (Printexc.to_string exn))
   end else
@@ -136,14 +137,14 @@ let search_id { base_uri} doi =
   body |> Cohttp_lwt.Body.to_string >>= fun body ->
   if status = `OK then begin
       try
-        let doi_json = Ezjsonm.from_string body in
+        let doi_json = J.from_string body in
         Lwt.return_ok doi_json
       with exn -> Lwt.return_error (`Msg (Printexc.to_string exn))
   end else
     Lwt.return_error (`Msg (Format.asprintf "Unexpected HTTP status: %a for %s" Http.Status.pp status body))
 
 let export {base_uri} format api =
-  let body = CL.Body.of_string (Ezjsonm.to_string api) in
+  let body = CL.Body.of_string (J.to_string api) in
   let headers = Http.Header.init_with "content-type" "application/json" in
   let uri = Uri.with_query' (export_endp base_uri ) ["format", (format_to_string format)] in
   CLU.call ~headers ~body `POST uri >>= fun (resp, body) ->
@@ -194,32 +195,67 @@ let fields_of_bib bib =
       Lwt.return v
   | Ok _ -> Lwt.fail_with "one bib at a time plz"
 
-let print_json j =
-  prerr_endline (Ezjsonm.to_string j)
-
 let bib_of_doi zt doi =
   prerr_endline ("Fetching " ^ doi);
   let v = resolve_doi zt doi >>= function
   | Ok r ->
-     print_json r;
      Lwt.return r
   | Error (`Msg _) ->
      Printf.eprintf "%s failed on /web, trying to /search\n%!" doi;
      search_id zt doi >>= function
      | Error (`Msg e) -> Lwt.fail_with e
      | Ok r ->
-        print_json r;
         Lwt.return r
   in
   v >>= fun v ->
-  print_json v;
   export zt Bibtex v >>= function
   | Error (`Msg e) -> Lwt.fail_with e
   | Ok r ->
       print_endline r;
       Lwt.return r
 
-let json_of_doi zt doi =
+let split_authors keys =
+  let authors =
+    List.assoc "author" keys |> J.get_string |>
+    Astring.String.cuts ~empty:false ~sep:" and " |>
+    List.map Bibtex.list_value |>
+    List.map (fun v -> List.rev v |> String.concat " ") |>
+    List.map (fun x -> `String x)
+  in
+  let keywords =
+    List.assoc_opt "keywords" keys |> function
+    | None -> []
+    | Some k ->
+        Astring.String.cuts ~empty:false ~sep:", " (J.get_string k) |>
+        List.map (fun x -> `String x)
+  in
+  J.update (`O keys) ["author"] (Some (`A authors)) |> fun j ->
+  J.update j ["keywords"] (match keywords with [] -> None | _ -> Some (`A keywords))
+
+let add_bibtex ~slug y =
+  let (.%{}) = fun y k -> J.find y [k] in
+  let add_if_present k f m =
+    match J.find y [k] with
+    | v -> SM.add k (f v) m
+    | exception Not_found -> m in
+  let string k m = add_if_present k J.get_string m in
+  let authors m = add_if_present "author" (fun j -> J.get_list J.get_string j |> String.concat " and ") m in
+  let cite_key = Astring.String.map (function '-' -> '_' |x -> x) slug in
+  let fields = SM.empty in
+  let type' = y.%{"bibtype"} |> J.get_string |> String.lowercase_ascii in
+  let fields = authors fields |> string "title" |> string "doi" |> string "month" |> string "year" |> string "url" in
+  let fields = match type' with
+    | "article" -> string "journal" fields |> string "volume" |> string "number" |> string "pages"
+    | "inproceedings" | "incollection" -> string "booktitle" fields |> string "editor" |> string "address" |> string "series" |>
+        string "number" |> string "volume" |> string "organization" |> string "publisher" |> string "pages"
+    | "book" -> string "editor" fields |> string "publisher" |> string "volume" |> string "pages"
+    | "misc" -> string "howpublished" fields
+    | "techreport" -> string "institution" fields |> string "number" |> string "address"
+    | b -> prerr_endline ("unknown bibtype " ^ b); fields in
+  Bibtex.v ~type' ~cite_key ~fields () |> Fmt.str "%a" Bibtex.pp |>
+  fun bib -> J.update y ["bib"] (Some (`String bib))
+
+let json_of_doi zt ~slug doi =
   bib_of_doi zt doi >>= fun x ->
   fields_of_bib x >>= fun x ->
-  Lwt.return (`O x)
+  Lwt.return (split_authors x |> add_bibtex ~slug)

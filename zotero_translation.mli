@@ -32,4 +32,4 @@ val search_id: t -> string -> ([>Ezjsonm.t], [>`Msg of string]) Lwt_result.t
 
 val export: t -> format -> Ezjsonm.t -> (string, [>`Msg of string]) Lwt_result.t
 
-val json_of_doi : t -> string -> Ezjsonm.t Lwt.t
+val json_of_doi : t -> slug:string -> string -> Ezjsonm.value Lwt.t
