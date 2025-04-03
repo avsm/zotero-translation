@@ -159,7 +159,6 @@ let export {base_uri} format api =
   end else
     Lwt.return_error (`Msg (Format.asprintf "Unexpected HTTP status: %a for %s" Http.Status.pp status body))
 
-module SM = B0_std.String.Map
 let unescape_hex s =
   let buf = Buffer.create (String.length s) in
   let rec aux i =
@@ -189,7 +188,7 @@ let fields_of_bib bib =
       Fmt.epr "%a\n%!" Bibtex.pp_error e;
       Lwt.fail_with "bib parse err TODO"
   | Ok [bib] ->
-      let f = Bibtex.fields bib |> SM.bindings |> List.map (fun (k,v) -> k, (unescape_bibtex v)) in
+      let f = Bibtex.fields bib |> Bibtex.SM.bindings |> List.map (fun (k,v) -> k, (unescape_bibtex v)) in
       let ty = match Bibtex.type' bib with "inbook" -> "book" | x -> x in
       let v = List.fold_left (fun acc (k,v) -> (k,(`String v))::acc) ["bibtype",`String ty] f in
       Lwt.return v
@@ -236,12 +235,12 @@ let add_bibtex ~slug y =
   let (.%{}) = fun y k -> J.find y [k] in
   let add_if_present k f m =
     match J.find y [k] with
-    | v -> SM.add k (f v) m
+    | v -> Bibtex.SM.add k (f v) m
     | exception Not_found -> m in
   let string k m = add_if_present k J.get_string m in
   let authors m = add_if_present "author" (fun j -> J.get_list J.get_string j |> String.concat " and ") m in
   let cite_key = Astring.String.map (function '-' -> '_' |x -> x) slug in
-  let fields = SM.empty in
+  let fields = Bibtex.SM.empty in
   let type' = y.%{"bibtype"} |> J.get_string |> String.lowercase_ascii in
   let fields = authors fields |> string "title" |> string "doi" |> string "month" |> string "year" |> string "url" in
   let fields = match type' with

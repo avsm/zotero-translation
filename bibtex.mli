@@ -9,16 +9,20 @@
     and [@comment] are not supported. For values we assume UTF-8 without
     escape sequences. Nested braces are handled though. *)
 
-open B0_std
-
 val escape : string -> string
 (** [escape s] escapes [s] for BibT{_E}X. *)
 
 type t
 (** The type for bibtex entries. *)
 
+module Tloc : sig
+  type t
+end
+
+module SM : Map.S with type key := string
+
 val v :
-  type':string -> cite_key:string -> fields:string String.Map.t -> unit -> t
+  type':string -> cite_key:string -> fields:string SM.t -> unit -> t
 (** [v ~type' ~id ~fields] is an entry of type [type'], identifier [id],
     and with field [fields]. *)
 
@@ -28,12 +32,9 @@ val type' : t -> string
 val cite_key : t -> string
 (** [cite_key e] is the citation key of the entry. *)
 
-val fields : t -> string String.Map.t
+val fields : t -> string SM.t
 (** [fields e] are the BibTeX fields. Fields are lowercased according
     to {!B0_std.String.Ascii.lowercase}. *)
-
-val loc : t -> B0_text.Tloc.t
-(** [loc] is a location spanning the entry definition. *)
 
 val pp : t Fmt.t
 (** [pp] formats an entry using BibT{_E}X syntax. *)
@@ -58,7 +59,7 @@ val annote : t -> string option
 type error_kind
 (** The type for kinds of decoding errors. *)
 
-type error = error_kind * B0_text.Tloc.t
+type error = error_kind * Tloc.t
 (** The type for errors. The error and its location. *)
 
 val pp_error : error Fmt.t
