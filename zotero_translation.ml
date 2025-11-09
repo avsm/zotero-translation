@@ -127,6 +127,21 @@ let resolve_doi { base_uri } doi =
   end else
     Lwt.return_error (`Msg (Format.asprintf "Unexpected HTTP status: %a for %s" Http.Status.pp status body))
 
+let resolve_url { base_uri } url =
+  let url_body = CL.Body.of_string url in
+  let headers = C.Header.init_with "content-type" "text/plain" in
+  let uri = web_endp base_uri in
+  CLU.call ~headers ~body:url_body `POST uri >>= fun (resp, body) ->
+  let status = C.Response.status resp in
+  body |> Cohttp_lwt.Body.to_string >>= fun body ->
+  if status = `OK then begin
+    try
+      let url_json = J.from_string body in
+      Lwt.return_ok url_json
+    with exn -> Lwt.return_error (`Msg (Printexc.to_string exn))
+  end else
+    Lwt.return_error (`Msg (Format.asprintf "Unexpected HTTP status: %a for %s" Http.Status.pp status body))
+
 let search_id { base_uri} doi =
   let body = "https://doi.org/" ^ doi in
   let doi_body = CL.Body.of_string body in
